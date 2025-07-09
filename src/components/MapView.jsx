@@ -294,10 +294,6 @@ import markerIcon2x from "leaflet/dist/images/marker-icon-2x.png";
 import markerIcon from "leaflet/dist/images/marker-icon.png";
 import markerShadow from "leaflet/dist/images/marker-shadow.png";
 
-
-
-
-
 // Fix default marker icons
 delete L.Icon.Default.prototype._getIconUrl;
 L.Icon.Default.mergeOptions({
@@ -363,12 +359,13 @@ function MapView() {
       toast.error("Error loading notes");
     }
   };
-
+  
   const handleDeleteNote = async (noteId) => {
     try {
       const res = await api.delete(`/notes/delete/${noteId}`);
       if (res.data.success) {
         setNotes((prev) => prev.filter((n) => n._id !== noteId));
+        setNearMeNotes((prev) => prev.filter((n) => n._id !== noteId));
         toast.success("Note deleted successfully");
       } else {
         toast.error("Failed to delete note");
@@ -389,7 +386,13 @@ function MapView() {
       if (query) {
         const res = await api.get(`/notes/filter?${query.slice(1)}`);
         if (res.data.success) {
-          setNotes(res.data.notes);
+          const filteredNotes = res.data.notes.map(note => {
+            if (note.imageBase64 && !note.imageBase64.startsWith('data:image')) {
+              note.imageBase64 = `data:image/jpeg;base64,${note.imageBase64}`;
+            }
+            return note;
+          });
+          setNotes(filteredNotes);
         } else {
           toast.error("Failed to apply filters");
         }
@@ -442,6 +445,7 @@ function MapView() {
       );
     });
   };
+  
 
   const startWatchingLocation = () => {
     if (navigator.geolocation) {
@@ -461,111 +465,132 @@ function MapView() {
 
   const handleNoteUpdated = (updatedNote) => {
     setNotes((prev) => prev.map((n) => (n._id === updatedNote._id ? updatedNote : n)));
-    // toast.success("Note updated successfully");
+    setNearMeNotes((prev) => prev.map((n) => (n._id === updatedNote._id ? updatedNote : n)));
   };
 
   return (
     <div className="flex flex-col md:flex-row flex-1 overflow-hidden">
-    {/* Map */}
-    <div className="w-full md:flex-1 h-[70vh] md:h-full">
-      <MapContainer
-        center={userLocation || [19.8762, 75.3433]}
-        zoom={userLocation ? 13 : 6}
-        className="w-full h-full"
-      >
-        <TileLayer
-          attribution='&copy; OpenStreetMap contributors'
-          url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
-        />
-        <FlyToLocation position={userLocation} />
-  
-        {/* User's notes */}
-        {notes.map((note) => (
-  <Marker key={note._id} position={[note.location.latitude, note.location.longitude]}>
-    <Popup minWidth={260}>
-      <div className="p-3 text-xs text-slate-800 space-y-2">
-        <h3 className="font-semibold text-sm truncate">{note.title}</h3>
-        <p className="text-gray-700">{note.text?.substring(0, 60)}...</p>
-        <p>Mood: <span className="font-medium">{note.mood}</span></p>
+      {/* Map */}
+      <div className="w-full md:flex-1 h-[70vh] md:h-full">
+        <MapContainer
+          center={userLocation || [19.8762, 75.3433]}
+          zoom={userLocation ? 13 : 6}
+          className="w-full h-full"
+        >
+          <TileLayer
+            attribution='&copy; OpenStreetMap contributors'
+            url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+          />
+          <FlyToLocation position={userLocation} />
 
-        {note.imageBase64 && (
-          <img
-            src={note.imageBase64}
-            alt={note.title}
-            className="mt-1 w-full max-w-[200px] h-32 object-cover rounded-lg border border-gray-300"
+          {/* User's notes */}
+          {notes.map((note) => (
+            <Marker key={note._id} position={[note.location.latitude, note.location.longitude]}>
+              <Popup minWidth={260}>
+                <div className="p-3 text-xs text-slate-800 space-y-2">
+                  <h3 className="font-semibold text-sm truncate">{note.title}</h3>
+                  <p className="text-gray-700">{note.text?.substring(0, 60)}...</p>
+                  <p>Mood: <span className="font-medium">{note.mood}</span></p>
+                  {note.imageBase64 && (
+                    <img
+                      src={note.imageBase64}
+                      alt={note.title}
+                      className="mt-1 w-full max-w-[200px] h-32 object-cover rounded-lg border border-gray-300"
+                      onError={(e) => e.target.style.display = 'none'}
+                    />
+                  )}
+                  <div className="flex justify-between mt-2 gap-2">
+                    <button
+                      onClick={() => setEditingNote(note)}
+                      className="px-2 py-1 border border-blue-500 text-blue-600 rounded hover:bg-blue-50 transition"
+                    >
+                      ✏ Edit
+                    </button>
+                    <button
+                      onClick={() => handleDeleteNote(note._id)}
+                      className="px-2 py-1 border border-red-500 text-red-600 rounded hover:bg-red-50 transition"
+                    >
+                      🗑 Delete
+                    </button>
+                  </div>
+                  <p className="text-[10px] text-gray-500 text-right">
+                    {new Date(note.createdAt).toLocaleDateString()}
+                  </p>
+                </div>
+              </Popup>
+            </Marker>
+          ))}
+
+          {/* Near me notes */}
+          {nearMeNotes.map((note) => (
+            <Marker
+              key={`near-${note._id}`}
+              position={[note.location.latitude, note.location.longitude]}
+              icon={redIcon}
+            >
+              <Popup minWidth={260}>
+                <div className="p-3 text-xs text-slate-800 space-y-2">
+                  <h3 className="font-semibold text-sm truncate">{note.title}</h3>
+                  <p className="text-gray-700">{note.text?.substring(0, 60)}...</p>
+                  <p>Mood: <span className="font-medium">{note.mood}</span></p>
+                  {note.imageBase64 && (
+                    <img
+                      src={note.imageBase64}
+                      alt={note.title}
+                      className="mt-1 w-full max-w-[200px] h-32 object-cover rounded-lg border border-gray-300"
+                      onError={(e) => e.target.style.display = 'none'}
+                    />
+                  )}
+                  <div className="flex justify-between mt-2 gap-2">
+                    <button
+                      onClick={() => setEditingNote(note)}
+                      className="px-2 py-1 border border-blue-500 text-blue-600 rounded hover:bg-blue-50 transition"
+                    >
+                      ✏ Edit
+                    </button>
+                    <button
+                      onClick={() => handleDeleteNote(note._id)}
+                      className="px-2 py-1 border border-red-500 text-red-600 rounded hover:bg-red-50 transition"
+                    >
+                      🗑 Delete
+                    </button>
+                  </div>
+                  <p className="text-[10px] text-gray-500 text-right">
+                    {new Date(note.createdAt).toLocaleDateString()}
+                  </p>
+                </div>
+              </Popup>
+            </Marker>
+          ))}
+
+          {/* Circle */}
+          {nearMeCircle && (
+            <Circle center={nearMeCircle.center} radius={nearMeCircle.radius} pathOptions={{ fillColor: "red", color: "red", fillOpacity: 0.1 }} />
+          )}
+
+          {/* User location */}
+          {userLocation && (
+            <Marker position={userLocation} icon={greenIcon}>
+              <Popup>📍 You are here</Popup>
+            </Marker>
+          )}
+        </MapContainer>
+
+        {/* Edit modal */}
+        {editingNote && (
+          <EditNoteModal
+            note={editingNote}
+            onClose={() => setEditingNote(null)}
+            onUpdated={handleNoteUpdated}
           />
         )}
-
-        <div className="flex justify-between mt-2 gap-2">
-          <button
-            onClick={() => setEditingNote(note)}
-            className="px-2 py-1 border border-blue-500 text-blue-600 rounded hover:bg-blue-50 transition"
-          >
-            ✏ Edit
-          </button>
-          <button
-            onClick={() => handleDeleteNote(note._id)}
-            className="px-2 py-1 border border-red-500 text-red-600 rounded hover:bg-red-50 transition"
-          >
-            🗑 Delete
-          </button>
-        </div>
-        <p className="text-[10px] text-gray-500 text-right">
-          {new Date(note.createdAt).toLocaleDateString()}
-        </p>
       </div>
-    </Popup>
-  </Marker>
-))}
 
-  
-        {/* Near me notes */}
-        {nearMeNotes.map((note) => (
-          <Marker key={`near-${note._id}`} position={[note.location.latitude, note.location.longitude]} icon={redIcon}>
-            <Popup minWidth={260}>
-              <div className="text-sm space-y-1">
-                <h3 className="font-semibold">{note.title}</h3>
-                <p>{note.text?.substring(0, 60)}...</p>
-                <p>Mood: <span className="font-medium">{note.mood}</span></p>
-                {note.imageBase64 && (
-                  <img src={note.imageBase64} alt={note.title} className="mt-1 w-52 h-40 object-cover rounded" />
-                )}
-                <p className="text-xs text-gray-400">{new Date(note.createdAt).toLocaleDateString()}</p>
-              </div>
-            </Popup>
-          </Marker>
-        ))}
-  
-        {/* Circle */}
-        {nearMeCircle && (
-          <Circle center={nearMeCircle.center} radius={nearMeCircle.radius} pathOptions={{ fillColor: "red", color: "red", fillOpacity: 0.1 }} />
-        )}
-  
-        {/* User location */}
-        {userLocation && (
-          <Marker position={userLocation} icon={greenIcon}>
-            <Popup>📍 You are here</Popup>
-          </Marker>
-        )}
-      </MapContainer>
-  
-      {/* Edit modal */}
-      {editingNote && (
-        <EditNoteModal
-          note={editingNote}
-          onClose={() => setEditingNote(null)}
-          onUpdated={handleNoteUpdated}
-        />
-      )}
+      {/* Sidebar */}
+      <div className="w-full md:w-80 overflow-y-auto md:h-full">
+        <Sidebar onFilter={handleFilter} onFindNearby={findNearby} />
+      </div>
     </div>
-  
-    {/* Sidebar */}
-    <div className="w-full md:w-80 overflow-y-auto md:h-full">
-      <Sidebar onFilter={handleFilter} onFindNearby={findNearby} />
-    </div>
-  </div>
-  
-  
   );
 }
 
